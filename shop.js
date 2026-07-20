@@ -1,7 +1,12 @@
 // LiteLoader-AIDS automatic generated
 /// <reference path="d:\ll/dts/helperlib/src/index.d.ts"/> 
 
-
+ll.registerPlugin(
+    /* name */ "商店系统",
+    /* introduction */ "一个简单的商店系统",
+    /* version */ [1,0,1],
+    /* otherInformation */ {}
+); 
 
 // 读取商店配置
 /**
@@ -28,26 +33,32 @@ function hashDJB2(str) {
     
     return hash;
 }
+if (!nameItem.get("history")) {
+    let history = {};
+    nameItem.set("history", history);
+}
 if (nameItem.get("hash") !== hashDJB2(JSON.stringify(shopConfig))||nameItem.get("hash") === null) {
     if (nameItem.get("hash") !== null) {
             nameItem.listKey().forEach(xuid => {
-            nameItem.delete(xuid);//清空所有玩家的自动售出设置,而且删除sell，buy和hash的索引表
+            if (xuid !== "history") {
+                nameItem.delete(xuid);
+            };//清空所有玩家的自动售出设置,而且删除sell，buy和hash的索引表
         });
         mc.broadcast("§c商店配置已更新，自动售出设置已清空，请重新设置！");
     };
     nameItem.set("hash", hashDJB2(JSON.stringify(shopConfig)));
     /**
      * 索引函数
-     * @param {Array} data 
+     * @param {Array} data2 
      * @param {string} index 
      */
-    function __index__ (data,index) {
+    function __index__ (data2,index) {
         let ob = {};
-        data.forEach((item, i) => {
+        data2.forEach((item, i) => {    
             if (item.type == "group") {
-                ob = Object.assign(ob, __index__(item.data, index + "-" + item.name));
+                ob = Object.assign(ob, __index__(item.data2, index + "-" + item.name));
             } else if (item.type == "exam") {
-                ob[item.name] = {type: item.data.type , image: item.image , data: item.data, i: index};
+                ob[item.name] = {type: item.data2.type , image: item.image , data: item.data2, i: index};
             }});
         return ob;
     };
@@ -334,11 +345,15 @@ function showBuyConfirm(player, itemData,index,category = null) {
         // 扣款
         pl.setMoney(currentMoney - totalCost);
         // 恢复直接传递物品对象的方式
-        mc.runcmdEx(`give ${pl.realName} ${itemData.data.type} ${count}`)//不需要检查
+        mc.runcmdEx(`give ${pl.realName} ${itemData.data.type} ${count} ${itemData.data.aux}`)//不需要检查
         // let bool = pl.giveItem(item,count);//这个有bug
         pl.refreshItems();
         // if(!bool)return pl.tell("§c购买失败");
         pl.tell(`§a购买${count}个${itemData.name}！花费${totalCost}金币`);
+        let history = nameItem.get("history");
+        history[pl.xuid+'_'+"buyCount"] = (history?.[pl.xuid+'_'+"buyCount"] || 0) + count;
+        history[pl.xuid+'_'+"buyTotal"] = (history?.[pl.xuid+'_'+"buyTotal"] || 0) + totalCost;
+        nameItem.set("history", history);
     });
 }
 
@@ -444,6 +459,10 @@ function showSellConfirm(player, itemData,index,category) {
         pl.setMoney(pl.getMoney() + totalGain);
 
         pl.tell(`§a出售${clItem}个${itemData.name}！获得${totalGain}金币`);
+        let history = nameItem.get("history");
+        history[pl.xuid+'_'+"sellCount"] = (history?.[pl.xuid+'_'+"sellCount"] || 0) + clItem;
+        history[pl.xuid+'_'+"sellTotal"] = (history?.[pl.xuid+'_'+"sellTotal"] || 0) + totalGain; 
+        nameItem.set("history", history);
     });
 }
 /**
@@ -621,14 +640,97 @@ function calculate(expr) {
     return result;
 }
 
+/**
+ * 获取排行榜数据
+ * @param {string} data1 排行类型：buyCount/sellTotal/buyTotal/sellCount
+ * @returns {Array|string} 排行榜数据或错误信息
+ */
+function getShopRank(data1){
+    let history = nameItem.get("history");
+    if (data1 !== "buyCount" && data1 !== "sellTotal" && data1 !== "buyTotal" && data1 !== "sellCount"){
+        return "无效的参数";
+    }
+    
+    let rankList = [];
+    let playerData = {}; // 临时存储每个玩家的数据
+    
+    // 遍历 history，收集指定类型的数据
+    for (let key in history) {
+        // key 是 [xuid, dataType] 格式
+        if (key.endsWith(data1)) {
+            let xuid = key.split('_')[0];
+            playerData[xuid] = history[key];
+        }
+    }
+    // logger.info(playerData);
+    // 转换为排名列表
+    for (let xuid in playerData) {
+        let value = playerData[xuid];
+        if (value > 0) {
+            // logger.info(`玩家 ${xuid} 的 ${data1} 数据为 ${value}`);
+            let name = data.xuid2name(xuid);
+            rankList.push({name: name, data: value});
+        }
+    }
+    
+    rankList.sort((a, b) => b.data - a.data);
+    return rankList;
+}
+/**
+ * 显示排行榜
+ * @param {Player} player 玩家对象
+ */
+function showRank(player) {
+    const form = mc.newSimpleForm()
+        .setTitle("商店排行榜")
+        .setContent("请选择要查看的排行榜类型：")
+        .addButton("购买次数排行榜")
+        .addButton("销售次数排行榜")
+        .addButton("购买总金额排行榜")
+        .addButton("销售总金额排行榜")
+    player.sendForm(form,(pl,data) => {
+        if(!data){
+            return;
+        }else{
+            let arr = ["buyCount","sellTotal","buyTotal","sellCount"];
+            let cnArr = ["购买次数","销售次数","购买总金额","销售总金额"];
+            let unit = ["次","次","金币","金币"];
+
+            let rankList = getShopRank(arr[data]);
+            const form2 = mc.newSimpleForm()
+                .setTitle(`商店${cnArr[data]}排行榜`)
+                .setContent(`玩家${cnArr[data]}排行榜：`)
+            function __color__(i) {
+                switch(i) {
+                    case 0: return "§l§6";
+                    case 1: return "§l§7";
+                    case 2: return "§l§v";
+                    default: return "§l";
+                }
+            }
+            for(let i = 0;i < rankList.length;i++){
+                let item = rankList[i];
+                form2.addLabel(`${__color__(i)}${i+1}. ${item.name}: ${item.data}${unit[data]}`);  
+            }
+            pl.sendForm(form2,() => {
+                return;
+            });
+        }
+    });
+   }
+ll.exports(getShopRank,"shopRank", "getShopRank")//获取排行榜数据
 // 指令注册
 const shopCommand = mc.newCommand("shop", "打开商店",PermType.Any);
 shopCommand.setEnum("openShop", ["open"]);
 shopCommand.setEnum("AutoSellList", ["list"]);
+shopCommand.setEnum("rank", ["rank"]);
 shopCommand.mandatory('action', ParamType.Enum, "openShop",1);
 shopCommand.mandatory('action', ParamType.Enum, "AutoSellList",1);
+shopCommand.mandatory('action', ParamType.Enum, "rank",1);
 shopCommand.overload(["openShop"]);
 shopCommand.overload(["AutoSellList"]);
+shopCommand.overload(["rank"]);
+
 shopCommand.setCallback((_cmd, ori, out, res) => {
     const player = ori.player;
     switch (res.action) {
@@ -636,34 +738,43 @@ shopCommand.setCallback((_cmd, ori, out, res) => {
             showShopMenu(player);
             return;
         case "list":
-        let data = nameItem.get(player.xuid);
-        if(!!data){
+        let data2 = nameItem.get(player.xuid);
+        if(!!data2){
             let msg = "§l§a自动售出物品列表\n";
-            for(let type in data){
-                let itemData = data[type];
+            for(let type in data2){
+                let itemData = data2[type];
                 msg += `§f${itemData[1]} §f(${itemData[0]}金币）\n`;
             }
             return out.success(msg);
         }else {
             return out.success("没有找到自动售出的物品。");
         }
+        case "rank":
+            showRank(player);
+            return;
     }
 });
 
 setInterval(() => {
     mc.getOnlinePlayers().forEach(player => {
-        let data = nameItem.get(player.xuid);
-        if(!!data){
-            for(let type in data){
-                let itemData = data[type];
+        let data2 = nameItem.get(player.xuid);
+        if(!!data2){
+            for(let type in data2){
+                let itemData = data2[type];
                 let num = player.clearItem(type, 99999);
                 if(num > 0){
                     player.refreshItems();
                     let totalGain = itemData[0] * num;
                     if (player.addMoney(totalGain)) {
                         player.tell(`§a自动售出${num}个${itemData[1]}！获得${totalGain}金币`);
+                        // 更新历史记录
+                        let history = nameItem.get("history");
+                        history[player.xuid+'_'+"sellCount"] = (history?.[player.xuid+'_'+"sellCount"] || 0) + num;
+                        history[player.xuid+'_'+"sellTotal"] = (history?.[player.xuid+'_'+"sellTotal"] || 0) + totalGain; 
+                        nameItem.set("history", history);
                     }
                 }
             }
         }
-    })}, config.get("AutoSellTime", 60) * 1000); // 每分钟检查一次自动售出设置
+    })
+}, config.get("AutoSellTime", 60) * 1000); // 每分钟检查一次自动售出设置
