@@ -4,7 +4,7 @@
 ll.registerPlugin(
     /* name */ "商店系统",
     /* introduction */ "一个简单的商店系统",
-    /* version */ [1,1,0],
+    /* version */ [1,1,1],
     /* otherInformation */ {}
 ); 
 
@@ -107,10 +107,16 @@ function checkHash () {
     if (nameItem.get("hash") !== hashDJB2(JSON.stringify(shopConfig))||!nameItem.get("Sell")||!nameItem.get("Buy")) {
         nameItem.listKey().forEach(xuid => {
         if (xuid !== "history") {
-            nameItem.delete(xuid);
+            let ob = nameItem.get(xuid);
+            for (let key in ob) {
+                if (!ob[key]?.[3]) {
+                    delete ob[key];
+                }
+            };
+            nameItem.set(xuid, ob);
         };//清空所有玩家的自动售出设置,而且删除sell，buy和hash的索引表
     });
-    logger.info("§c商店配置已更新，自动售出设置已清空，请重新设置！");
+    logger.info("§c商店配置已更新，系统自动售出设置已清空，请重新设置！");
     nameItem.set("hash", hashDJB2(JSON.stringify(shopConfig)));
     /**
      * 索引函数
@@ -166,7 +172,7 @@ function showPlayersShopMenu(player) {
         .addButton('§l查看自己商店');//0
     let othersXuid =[];
     playerShop.listKey().at(0) ? playerShop.listKey().forEach(xuid => {
-        if (xuid !== player.xuid) {
+        if (xuid !== player.xuid && !xuid.endsWith("_msg")) {
             othersXuid.push(xuid);
             form.addButton(`§l查看${playerShop.get(xuid).name}的商店`);
         }
@@ -224,6 +230,17 @@ function showPlayerShop(player, xuid) {
     })
 }
 /**
+ * 规范商店名称
+ * @param {string} value 商店名称
+ * @returns {string} 规范后的商店名称
+ */
+function normalizeShopName(value) {
+    return String(value)
+        .replace(/[\r\n\t]/g, " ")
+        .trim()
+        .slice(0, 24);
+}
+/**
  * 设置玩家商店名称
  * @param {Player} player
  * @param {boolean} isNew
@@ -233,22 +250,29 @@ function setPlayerShopName(player, isNew = false) {
         .setTitle('设置商店名称')
         .addInput('商店名称', '请输入商店名称', playerShop.get(player.xuid)?.name || '');
     player.sendForm(form1, (pl, data) => {
-        if (!!data?.[0] && data?.[0] !== "") {
-            if (isNew) {
-                playerShop.set(pl.xuid, { name: data[0], Buy: [], Sell: [], items: [] });
-            }else{
-                const playerShopData = playerShop.get(pl.xuid);
-                playerShopData.name = data[0];
-                playerShop.set(pl.xuid,playerShopData);
-            };
-            showPlayerOwnShop(pl);
-            return;
-        }else {
-            pl.tell("§c商店名称不能为空");
-            isNew ? showPlayersShopMenu(pl) : showPlayerOwnShop(pl);
-            return;
+        if (!data) {
+            return isNew
+                ? showPlayersShopMenu(pl)
+                : showPlayerOwnShop(pl);
         }
-        })
+        const shopName = normalizeShopName(data[0]);
+        // 检查规范化后的结果
+        if (!shopName) {
+            pl.tell("§c商店名称不能为空");
+            return isNew
+                ? showPlayersShopMenu(pl)
+                : showPlayerOwnShop(pl);
+        };
+        if (isNew) {
+            playerShop.set(pl.xuid, { name: shopName, Buy: [], Sell: [], items: [] });
+        }else{
+            const playerShopData = playerShop.get(pl.xuid);
+            playerShopData.name = shopName;
+            playerShop.set(pl.xuid,playerShopData);
+        };
+        showPlayerOwnShop(pl);
+        return;
+    })
 }
 /**
  * 显示玩家自己的商店
@@ -285,11 +309,12 @@ function showRecycledItems(player) {
         .setTitle(`§l§d${playerShop.get(player.xuid).name}的仓库`)
         .setContent("§b请选择操作")
         .addButton('一键领取')
-    const PlayerShopData = playerShop.get(player.xuid);
+    let PlayerShopData = playerShop.get(player.xuid);
     PlayerShopData.items.forEach(item => {
         form.addButton(`${item.name} x${item.data.count}`, item.image);
     })
     player.sendForm(form, (pl, data) => {
+        PlayerShopData = playerShop.get(player.xuid);
         if (!data && data !== 0) {
             showPlayerOwnShop(pl);
             return;
@@ -445,8 +470,9 @@ function addPlayerShopItem (player, id, owner) {
  * @param {string} owner 玩家 XUID
  */
 function setPlayerShopItem(player, id, index, owner = player.xuid) {
-    const PlayerShopData = playerShop.get(owner);
-    const itemData = PlayerShopData[id][index];
+    let PlayerShopData = playerShop.get(owner);
+    let itemData = PlayerShopData[id][index];
+    let itemDataName = itemData.name;
     let it = null;
     if (!!itemData.data?.type) {
         it = mc.newItem(itemData.data.type,1);
@@ -472,12 +498,19 @@ function setPlayerShopItem(player, id, index, owner = player.xuid) {
         .addInput(id === "Buy" ? '补货数量' : '增加回收数量', id === "Buy" ? '请输入补货数量' : `请输入增加回收物品数量`,'0')//3
         .addInput('价格', '请输入价格', ''+itemData.data.money)//4
     player.sendForm(form, (pl, data) => {
+        PlayerShopData = playerShop.get(owner);
+        itemData = PlayerShopData[id][index];
+        if (itemData?.name !== itemDataName) {
+            pl.tell("§c物品已改变");
+            return setPlayerShop(pl, id, owner);
+        };
         if (!data) {
             return setPlayerShop(pl, id, owner);
         };
         if (data[2]) {
             return playerDeleteConfirm(pl, id, index, owner);
         } else if (data[3]  !== '') {
+            
             let addCount = 0;
             try {
                 addCount = calculate(data[3]);
@@ -488,7 +521,47 @@ function setPlayerShopItem(player, id, index, owner = player.xuid) {
             if (addCount%1 !== 0) {
                 pl.tell("§c补货数量必须是整数");
                 return setPlayerShop(pl, id, owner);
+            }else if (!Number.isSafeInteger(addCount)) {
+                pl.tell('§c补货数量必须是安全整数');
+                return setPlayerShop(pl, id, owner);
             };
+            let moneyNum = null;
+            let changeMoney = 0;
+            if (data[4] !== ''+itemData.data.money && data[4] !== '') {
+                try {
+                    moneyNum = calculate(data[4]);
+                }catch (error) {
+                    pl.tell("§c价格格式错误");
+                    return setPlayerShop(pl, id, owner);
+                }
+                if (moneyNum%1 !== 0) {
+                    pl.tell("§c价格必须是整数");
+                    return setPlayerShop(pl, id, owner);
+                }else if (moneyNum < 0) {
+                    pl.tell("§c价格不能小于0");
+                    return setPlayerShop(pl, id, owner);
+                }else if (!Number.isSafeInteger(moneyNum)) {
+                    pl.tell('§c价格必须是安全整数');
+                    return setPlayerShop(pl, id, owner);
+                };
+                if (id === 'Sell') {
+                    if (moneyNum > itemData.data.money) {
+                        changeMoney = (moneyNum - itemData.data.money)*itemData.data.count;
+                        if (changeMoney > money.get(owner)) {
+                            pl.tell("§c余额不足");
+                            return setPlayerShop(pl, id, owner);
+                        }
+                        money.reduce(owner, changeMoney);
+                        changeMoney = -changeMoney;
+                    }else if (moneyNum < itemData.data.money){
+                        changeMoney = (itemData.data.money - moneyNum)*itemData.data.count;
+                        money.add(owner, changeMoney);
+                    }
+                }
+                itemData.data.money = moneyNum;
+                pl.tell(`§a修改${id === "Buy" ? "上架" : "回收"}物品${itemData.name}成功，价格${moneyNum}`);
+                playerShop.set(owner, PlayerShopData);
+            }
             if (addCount < 0) {
                 if (itemData.data.count < -addCount) {
                     pl.tell("§c将删除所有物品，数量" + itemData.data.count);
@@ -510,7 +583,7 @@ function setPlayerShopItem(player, id, index, owner = player.xuid) {
                     let clItem = clearItem(player, it, addCount);
                     itemData.data.count += clItem;
                     pl.tell(`§a上架物品${itemData.name}成功，增加数量${clItem}`);
-                }else {
+                }else if (id === 'Sell') {
                     const needMoney = itemData.data.money * addCount;
                     if (needMoney > money.get(owner)) {
                         pl.tell("§c余额不足");
@@ -518,30 +591,10 @@ function setPlayerShopItem(player, id, index, owner = player.xuid) {
                     };
                     money.reduce(owner, needMoney);
                     itemData.data.count += addCount;
-                    pl.tell(`§a回收物品${itemData.name}成功，增加数量${addCount}，消耗${needMoney}金币`);
+                    pl.tell(`§a回收物品${itemData.name}成功，增加数量${addCount}，消耗${needMoney +changeMoney}金币`);
                 };
                 playerShop.set(owner, PlayerShopData);
             }//0不处理
-             if (data[4] !== ''+itemData.data.money && data[4] !== '') {
-                let money = null;
-                try {
-                    money = calculate(data[4]);
-                }catch (error) {
-                    pl.tell("§c价格格式错误");
-                    return setPlayerShop(pl, id, owner);
-                }
-                if (money%1 !== 0) {
-                    pl.tell("§c价格必须是整数");
-                    return setPlayerShop(pl, id, owner);
-                }else if (money < 0) {
-                    pl.tell("§c价格不能小于0");
-                    return setPlayerShop(pl, id, owner);
-                };
-                itemData.data.money = money;
-                pl.tell(`§a修改${id === "Buy" ? "上架" : "回收"}物品${itemData.name}成功，价格${money}`);
-                playerShop.set(owner, PlayerShopData);
-             }
-
         }
     })
 }
@@ -797,7 +850,7 @@ function showAddMenu (player, id, index) {
                 }
             });
             }else if (data === 2) {
-            setMenu(pl, id, index.slice(0, -1));
+            setMenu(pl, id, index);
             return;
         }
     }); 
@@ -864,6 +917,8 @@ function setExamMenu(player, id, index) {
                     pl.tell(`§c价格必须为整数`);
                 }else if (price < 0) {
                     pl.tell(`§c价格不能为负数`);
+                }else if (!Number.isSafeInteger(price)) {
+                    pl.tell(`§c价格必须为安全整数`);
                 }else {
                     category.data.money = price;
                     ConfigUpdate();
@@ -961,7 +1016,7 @@ function showAutoSellKind(player, index = [], isSearch = false, category = null)
         var ob = {};
     }
     category.data.forEach(item => {
-            form.addSwitch(`${item.name} §f(${item.data.money}金币）`, (!ob?.[item.data?.type || item.data?.snbt])?false:true);
+        form.addSwitch(`${item.name} §f(${item.data.money}金币${item.type === "playerExam" ? `数量:${item.data.count}` : ""} ${isSearch ? ` §a${item.i}` : ""}`, (!ob?.[item.data?.type || item.data?.snbt])?false:true);
     });
     player.sendForm(form, (pl, data) => {
         if (!!data) {
@@ -973,25 +1028,27 @@ function showAutoSellKind(player, index = [], isSearch = false, category = null)
                     // }else{
                     //     var ob = {};
                     // };
-                    if (!ob?.[category.data[i-1].data?.type || category.data[i-1].data?.snbt]) {
-                        ob[category.data[i-1].data?.type || category.data[i-1].data?.snbt] = [category.data[i-1].data.money , category.data[i-1].name, category.data[i-1].data.aux || 0];
+                    let itemData = category.data[i-1];
+                    if (!ob?.[itemData.data?.type || itemData.data?.snbt]) {
+                        ob[itemData.data?.type || itemData.data?.snbt] = [itemData.data.money , itemData.name, itemData.data.aux || 0 , itemData.xuid ?? null];
                         let boo = nameItem.set(pl.xuid, ob);
                         if (!boo) {
                             pl.tell("§c设置失败，请联系管理员");
                         }else{
-                            pl.tell(`§a已设置自动售出${category.data[i-1].name}！`);
+                            pl.tell(`§a已设置自动售出${itemData.name}！`);
                         }
                     }
                 }else {
                     let ob = nameItem.get(pl.xuid);
                     if (!!ob) {
-                        if(!!ob[category.data[i-1].data?.type || category.data[i-1].data?.snbt]){
-                            delete ob[category.data[i-1].data?.type || category.data[i-1].data?.snbt];
+                        let itemData = category.data[i-1];
+                        if(!!ob[itemData.data?.type || itemData.data?.snbt]){
+                            delete ob[itemData.data?.type || itemData.data?.snbt];
                             let boo = nameItem.set(pl.xuid, ob);
                             if (!boo) {
                                 pl.tell("§c取消设置失败，请联系管理员");
                             }else{
-                                pl.tell(`§a已取消自动售出${category.data[i-1].name}！`);
+                                pl.tell(`§a已取消自动售出${itemData.name}！`);
                             }
                         }
                     }
@@ -1255,7 +1312,11 @@ function buyAndCost(player, itemData, count, payPlayerXuid = null) {
         ShopHasCount = 999999;
     }else{
         ShopHasCount = itemData.data.count;
-    }
+    };
+    if (ShopHasCount <= 0) {
+        player.tell('§c物品已售罄');
+        return [0,0]
+    };
     if (count > ShopHasCount) {
         player.tell(`§c购买数量已超过最大限制，将以最大数量购买`);
         count = ShopHasCount;
@@ -1279,6 +1340,14 @@ function buyAndCost(player, itemData, count, payPlayerXuid = null) {
         money.add(payPlayerXuid, totalCost);
         payPlayerShopData.Buy.find(item => item.name === itemData.name).data.count -= count;
         playerShop.set(payPlayerXuid, payPlayerShopData);
+        const payPlayer = mc.getPlayer(payPlayerXuid);
+        if (!!payPlayer) {
+            payPlayer.tell(`§a${player.realName} 从你的商店购买了 ${count} 个${itemData.name}，你获得了 ${totalCost} 金币`);
+        } else {
+            let msgArr = playerShop.get(payPlayerXuid+'_msg') || []
+            msgArr.push(`§a${player.realName} 从你的商店购买了 ${count} 个${itemData.name}，你获得了 ${totalCost} 金币`)
+            playerShop.set(payPlayerXuid+'_msg', msgArr);
+        }
     };
     player.refreshItems();
     // if(!bool)return pl.tell("§c购买失败");
@@ -1441,7 +1510,7 @@ function clearItem(player, it, count) {
  * 售出物品并给予金币
  * @param {Player} player 
  * @param {Object} itemData 
- * @param {number} count 
+ * @param {number|string} count 售出数量 All 表示出售所有
  * @param {Item} it 
  * @param {string} payPlayerXuid 
  */
@@ -1463,6 +1532,13 @@ function sellAndGive(player, itemData, count, it, payPlayerXuid = null) {
     }else{
         ShopHasCount = itemData.data.count;
     }
+    if (ShopHasCount <= 0) {
+        player.tell('§c物品已售罄');
+        return [0,0]
+    };
+    if (count === 'All') {
+        count = ShopHasCount;
+    };
     if (count > ShopHasCount) {
         player.tell(`§a售出数量已超过最大限制，将以最大数量售出`);
         count = ShopHasCount;
@@ -1471,6 +1547,9 @@ function sellAndGive(player, itemData, count, it, payPlayerXuid = null) {
     if (clItem === ShopHasCount) {
         isAll = true;
     };
+    if (clItem === 0) {
+        return [0,0]
+    }
     const totalGain = itemData.data.money * clItem;
     if (!!payPlayerXuid) {
         const payPlayerShopData = playerShop.get(payPlayerXuid);
@@ -1481,6 +1560,14 @@ function sellAndGive(player, itemData, count, it, payPlayerXuid = null) {
         }; 
         playerShopItemsAdd(payPlayerShopData, itemData, clItem, payPlayerXuid);
         playerShop.set(payPlayerXuid, payPlayerShopData);
+        const payPlayer = mc.getPlayer(payPlayerXuid);
+        if (!!payPlayer) {
+            payPlayer.tell(`§a从${player.realName}回收到${clItem}个${itemData.name}！`);
+        } else {
+            let msgArr = playerShop.get(payPlayerXuid+'_msg') || []
+            msgArr.push(`§a从${player.realName}回收到${clItem}个${itemData.name}！`);
+            playerShop.set(payPlayerXuid+'_msg', msgArr);
+        }
     };
     player.addMoney(totalGain);
     player.tell(`§a出售${clItem}个${itemData.name}！获得${totalGain}金币`);
@@ -1597,13 +1684,14 @@ function showSearchMenu(player, kind = 0) {
             return;
         }else {
             let searchName = data[0];
-            let indexOB = {};
             kind = data[1];
+            let kindName = '';
             if (kind === 0) {
-                indexOB = nameItem.get("Buy");
+                kindName = 'Buy';
             } else if (kind === 1||kind === 2) {
-                indexOB = nameItem.get("Sell");
+                kindName = 'Sell';
             }
+            let indexOB = nameItem.get(kindName);
             // logger.info(indexOB);
             let searchResults = [];
             
@@ -1619,35 +1707,31 @@ function showSearchMenu(player, kind = 0) {
                     }
                 }
             });
-            if (kind !== 2) {
-                playerShop.listKey().forEach(key => {
-                    if (key !== pl.xuid) {
-                        playerShop.get(key)[['Buy','Sell'][kind]].forEach(item => {
-                            if (item.name.includes(searchName)) {
-                                let it = ItemData2Item(item);
-                                let playerShopName = playerShop.get(key).name;
-                                let itemExist = searchResults.find(item => item.it.match(it))
-                                if (!itemExist) {
-                                    searchResults.push({it:it,data: [{name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShopName}]});
-                                }else {
-                                    itemExist.data.push({name: item.name, image: item.image, type: "playerExam", xuid: key, data: item.data, i: playerShopName});
-                                }
+            playerShop.listKey().forEach(key => {
+                if (key !== pl.xuid && !key.endsWith('_msg')) {
+                    playerShop.get(key)[kindName].forEach(item => {
+                        if (item.name.includes(searchName)) {
+                            let it = ItemData2Item(item);
+                            let playerShopName = playerShop.get(key).name;
+                            let itemExist = searchResults.find(item => item.it.match(it))
+                            if (!itemExist) {
+                                searchResults.push({it:it,data: [{name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShopName}]});
+                            }else {
+                                itemExist.data.push({name: item.name, image: item.image, type: "playerExam", xuid: key, data: item.data, i: playerShopName});
                             }
-                        })
-                    }
-                })
-            };
+                        }
+                    })
+                }
+            })
             for (let item of searchResults) {
                 if (data[2] === 0) {
-                    item.data.sort((a, b) => (b.data?.count || 999999) - (a.data?.count || 999999));
+                    item.data.sort((a, b) => (b.data?.count ?? 999999) - (a.data?.count ?? 999999));
                 } else if (data[2] === 1 && kind === 0) {
                     item.data.sort((a, b) => a.data.money - b.data.money);
                 } else if (data[2] === 1 && (kind === 1||kind === 2)) {
                     item.data.sort((a, b) => b.data.money - a.data.money);
                 }
             }
-          
-        
         // logger.info(searchResults);
         if (searchResults.length === 0) {
             pl.tell("§c未找到匹配的物品");
@@ -1668,6 +1752,39 @@ function showSearchMenu(player, kind = 0) {
     }});
 }
 
+// /**
+//  * 搜索物品
+//  * @param {Item} item LSE Item 对象。
+//  * @param {Number} kind 搜索类型，0：购买，1：出售
+//  * @param {string} Plxuid 玩家 xuid
+//  * @returns {Array}
+//  */
+// function SreachItem (it, kind, Plxuid) {
+//     let searchResults = [];
+//     let kindName = '';
+//     if (kind === 0) {
+//         kindName = 'Buy';
+//     } else if (kind === 1||kind === 2) {
+//         kindName = 'Sell';
+//     }
+//     let indexOB = nameItem.get(kindName);
+//     indexOB.forEach(key => {
+//         if (ItemData2Item(indexOB[key]).match(it)) {
+//             searchResults.push(SearchItemData2ItemData(indexOB[key], key));
+//         }
+//     })
+//     playerShop.listKey.forEach(key => {
+//         if (key !== Plxuid && !key.endsWith('_msg')) {
+//             playerShop.get(key)[kindName].forEach(item => {
+//                 if (ItemData2Item(item).match(it)) {
+//                     searchResults.push({name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShop.get(key).name});
+//                 }
+//             })
+//         }
+//     })
+//     return searchResults;
+// }
+// 留着备用的搜索函数
 /**
  * 计算表达式的值
  * @param {string} expr 
@@ -2205,19 +2322,19 @@ function parseItemInfo(itemOrType) {
 
 	// 递归提取附魔，并去除递归扫描可能产生的重复描述。
 	itemFindEnchantments(nbtObject, enchantments, "");
-	if (enchantments.length) parts.push("附魔：" + enchantments.filter(function (name, index, all) {
+	if (enchantments.length) parts.push("附魔:" + enchantments.filter(function (name, index, all) {
 		return all.indexOf(name) === index;
 	}).join("、"));
 
 	// LSE 的 damage 表示已损耗耐久，因此剩余耐久为 maxDamage - damage。
 	if (item.isDamageableItem && Number(item.maxDamage) > 0) {
 		remainingDurability = Math.max(0, Number(item.maxDamage) - Number(item.damage || 0));
-		parts.push("耐久：" + remainingDurability + "/" + item.maxDamage);
+		parts.push("耐久:" + remainingDurability + "/" + item.maxDamage);
 	}
 
 	// 过滤空 Lore 行，避免摘要中产生无意义分隔符。
 	lore = Array.isArray(item.lore) ? item.lore.filter(function (line) { return String(line).length > 0; }) : [];
-	if (lore.length) parts.push("Lore：" + lore.join(" / "));
+	if (lore.length) parts.push("Lore:" + lore.join("/"));
 
     specialLabels = itemSpecialDataLabels(item, nbtObject);
 	if (specialLabels.length) parts.push(specialLabels.join("、"));
@@ -2228,8 +2345,9 @@ function parseItemInfo(itemOrType) {
 	if (needSnbt && !enchantments.length && !item.isDamaged && !lore.length && !specialLabels.length) {
         parts.push("NBT 与默认物品不同");
 	}
-	return itemParseResult(parts.join(" - "), needSnbt);
+	return itemParseResult(parts.join("-"), needSnbt);
 }
+
 /**
  * 显示排行榜
  * @param {Player} player 玩家对象
@@ -2289,6 +2407,9 @@ shopCommand.overload(["rank"]);
 shopCommand.overload(["test"]);
 shopCommand.setCallback((_cmd, ori, out, res) => {
     const player = ori.player;
+    if (!player) {
+        return out.error("该命令只能由玩家执行");
+    }
     switch (res.action) {
         case "open":
             showShopMenu(player);
@@ -2316,39 +2437,55 @@ shopCommand.setCallback((_cmd, ori, out, res) => {
     }
 });
 shopCommand.setup();
+mc.listen('onJoin', (player) => {
+    let msg = playerShop.get(player.xuid+'_msg') || [];
+    if(Array.isArray(msg)){
+        player.tell(msg.join("\n"));
+    }
+    playerShop.delete(player.xuid+'_msg')
+})
 
 setInterval(() => {
+    if (!config.get("AutoSell", true)) {
+        return;
+    };
     mc.getOnlinePlayers().forEach(player => {
         let data2 = nameItem.get(player.xuid);
         if(!!data2){
             for(let type in data2){
-                let itemData = data2[type];
+                let itemData = {name: data2[type][1],type: !!data2[type]?.[3] ? "playExam" : "exam", data: { money: data2[type][0], aux: data2[type][2] || 0}};
                 let item = null;
+                if (itemData.type === "playExam"){
+                    let exam = playerShop.get(data2[type][3]).Sell.find(item => item.name === itemData.name)
+                    if (!exam) { 
+                        delete data2[type];
+                        nameItem.set(player.xuid, data2);
+                        continue;
+                    }else {
+                        itemData.data.money = exam.data.money;
+                        if (exam.data?.aux !== undefined) {
+                            itemData.data.aux = exam.data.aux;
+                        }
+                    }
+                }                
                 if (type[0] === '{') {
                     item = mc.newItem(NBT.parseSNBT(type));
+                    itemData.data.snbt = type;
                 } else {
                     item = mc.newItem(type,1);
-                    item.setAux(itemData?.[2] || 0);
+                    item.setAux(itemData.data?.aux || 0);
+                    itemData.data.type = type;
                 }
-                let ct = player.getInventory();
-                let count = 0;
-                for (let i = 0; i < ct.size; i++) {
-                    if (ct.getItem(i).match(item)) {
-                        count += ct.getItem(i).count;
-                        ct.removeItem(i, ct.getItem(i).count)
-                    }
-                }
+                let [count, totalGain] = sellAndGive(player, itemData, "All", item, data2[type][3]);
                 // let num = player.clearItem(type, 99999);
                 if(count > 0){
-                    let totalGain = itemData[0] * count;
-                    if (player.addMoney(totalGain)) {
-                        player.tell(`§a自动售出${count}个${itemData[1]}！获得${totalGain}金币`);
-                        // 更新历史记录
+                    // 更新历史记录
+                    if (!data2[type]?.[3]){
                         let history = nameItem.get("history");
                         history[player.xuid+'_'+"sellCount"] = (history?.[player.xuid+'_'+"sellCount"] || 0) + count;
                         history[player.xuid+'_'+"sellTotal"] = (history?.[player.xuid+'_'+"sellTotal"] || 0) + totalGain; 
                         nameItem.set("history", history);
-                    }
+                    };  
                 }
             }
             player.refreshItems();
