@@ -4,7 +4,7 @@
 ll.registerPlugin(
     /* name */ "商店系统",
     /* introduction */ "一个简单的商店系统",
-    /* version */ [1,1,1],
+    /* version */ [1,1,2],
     /* otherInformation */ {}
 ); 
 
@@ -13,6 +13,7 @@ ll.registerPlugin(
  * @type {Object}
  */
 // VaillanI18n.setCurrentLanguage('zh_CN')
+const version = 1;
 const shopConfig = JSON.parse(File.readFrom("plugins/shop/shopdata.json"));
 const nameItem = new KVDatabase("plugins/shop/db");
 const playerShop = new KVDatabase("plugins/shop/playerShopDB");
@@ -104,9 +105,9 @@ checkHash();
  * 检查哈希值是否一致
  */
 function checkHash () {
-    if (nameItem.get("hash") !== hashDJB2(JSON.stringify(shopConfig))||!nameItem.get("Sell")||!nameItem.get("Buy")) {
+    if (nameItem.get("hash") !== hashDJB2(JSON.stringify(shopConfig))||!nameItem.get("Sell")||!nameItem.get("Buy")||!nameItem.get("version")) {
         nameItem.listKey().forEach(xuid => {
-        if (xuid !== "history") {
+        if (xuid !== "history" && xuid !== "version") {
             let ob = nameItem.get(xuid);
             for (let key in ob) {
                 if (!ob[key]?.[3]) {
@@ -115,31 +116,36 @@ function checkHash () {
             };
             nameItem.set(xuid, ob);
         };//清空所有玩家的自动售出设置,而且删除sell，buy和hash的索引表
-    });
-    logger.info("§c商店配置已更新，系统自动售出设置已清空，请重新设置！");
-    nameItem.set("hash", hashDJB2(JSON.stringify(shopConfig)));
-    /**
-     * 索引函数
-     * @param {Array} data2 
-     * @param {string} index 
-     */
-    function __index__ (data2,index) {
-        let ob = {};
-        data2.forEach((item) => {    
-            if (item.type == "group") {
-                ob = Object.assign(ob, __index__(item.data, index + "-" + item.name));
-            } else if (item.type == "exam") {
-                ob[item.name] = {type: "exam" , image: item.image , data: item.data, i: index};
-            }});
-        return ob;
+        });
+        logger.info("§c商店配置已更新，系统自动售出设置已清空，请重新设置！");
+        nameItem.set("hash", hashDJB2(JSON.stringify(shopConfig)));
+        /**
+         * 索引函数
+         * @param {Array} data2 
+         * @param {string} index 
+         */
+        function __index__ (data2,index,numIndex) {
+            let ob = {};
+            data2.forEach((item,i) => {
+                let path = [...numIndex, i];
+                if (item.type == "group") {
+                    ob = Object.assign(ob, __index__(item.data, index + "-" + item.name, path));
+                } else if (item.type == "exam") {
+                    ob[item.name] = {type: "exam" , image: item.image , data: item.data, i: index, numIndex: path};
+                }});
+            return ob;
+        };
+        // logger.info(__index__(shopConfig.Sell, ""));
+        // logger.info(__index__(shopConfig.Buy, ""));
+        nameItem.set("Sell", __index__(shopConfig.Sell, "", []));
+        nameItem.set("Buy", __index__(shopConfig.Buy, "", []));    
+        // test.set("Sell", __index__(shopConfig.Sell, ""));
+        // test.set("Buy", __index__(shopConfig.Buy, ""));
     };
-    // logger.info(__index__(shopConfig.Sell, ""));
-    // logger.info(__index__(shopConfig.Buy, ""));
-    nameItem.set("Sell", __index__(shopConfig.Sell, ""));
-    nameItem.set("Buy", __index__(shopConfig.Buy, ""));    
-    // test.set("Sell", __index__(shopConfig.Sell, ""));
-    // test.set("Buy", __index__(shopConfig.Buy, ""));
-}}
+    if (nameItem.get("version") !== version) {
+        nameItem.set("version", version);
+    }
+}
 /**
  * 显示商店菜单
  * @param {Player} player 
@@ -1354,6 +1360,7 @@ function buyAndCost(player, itemData, count, payPlayerXuid = null) {
     player.tell(`§a购买${count}个${itemData.name}${payPlayerXuid === null ? '' : '从'+playerShop.get(payPlayerXuid).name}！花费${totalCost}金币`);
     return [count,totalCost];
 }
+
 // 购买确认表单
 /**
  * 
@@ -1573,6 +1580,22 @@ function sellAndGive(player, itemData, count, it, payPlayerXuid = null) {
     player.tell(`§a出售${clItem}个${itemData.name}！获得${totalGain}金币`);
     return [clItem, totalGain];
 }
+/**
+ * 获取玩家物品数量
+ * @param {Player} player 
+ * @param {Item} it 
+ * @returns {number} 物品数量
+ */
+function getItemInPlayer(player, it) {
+    let ct = player.getInventory();
+    let playerItemCount = 0;
+    for (let i = 0; i < ct.size; i++) {
+        if (ct.getItem(i).match(it)) {
+            playerItemCount += ct.getItem(i).count;
+        }
+    }
+    return playerItemCount;
+}
 // 出售确认表单
 /**
  * 
@@ -1584,8 +1607,6 @@ function sellAndGive(player, itemData, count, it, payPlayerXuid = null) {
  * @param {string} PlayerShopXuid 玩家商店XUID
  */
 function showSellConfirm(player, itemData, indexKind, index = [], category = {}, PlayerShopXuid = null) {
-    let ct = player.getInventory();
-    let playerItemCount = 0;
     let it = null;
     if (!itemData.data?.type && !!itemData.data?.snbt) {
         it = mc.newItem(NBT.parseSNBT(itemData.data.snbt))
@@ -1596,11 +1617,7 @@ function showSellConfirm(player, itemData, indexKind, index = [], category = {},
         logger.error("物品类型或SNBT为空");
         return;
     }
-    for (let i = 0; i < ct.size; i++) {
-        if (ct.getItem(i).match(it)) {
-            playerItemCount += ct.getItem(i).count;
-        }
-    }
+    let playerItemCount = getItemInPlayer(player, it);
     const form = mc.newCustomForm()
         .setTitle("出售确认")
         .addLabel(`§l物品信息\n名称: ${itemData.name}\n单价: ${itemData.data.money}金币 \n${(PlayerShopXuid !== null ?'数量: '+ itemData.data.count : '')}\n§l当前拥有: ${playerItemCount}个`)
@@ -1663,7 +1680,47 @@ function ItemData2Item(itemData) {
  * @returns {Object}
  */
 function SearchItemData2ItemData (itemData, key) {
-    return {name: key, image: itemData.image,type: "exam",data: itemData.data, i: itemData.i}
+    return {name: key, image: itemData.image,type: "exam",data: itemData.data, i: itemData.i, numIndex: itemData.numIndex}
+}
+/**
+ * 搜索物品名称
+ * @param {string} kindName 分类名称
+ * @param {string} searchName 搜索名称
+ * @param {string} plxuid 玩家XUID
+ * @returns {Array}
+ */
+function SearchItemName(kindName, searchName, plxuid) {
+    let indexOB = nameItem.get(kindName);
+    let searchResults = [];       
+    Object.keys(indexOB).forEach(key => {
+        if (key.includes(searchName)) {
+            let itemData = indexOB[key];
+            let it = ItemData2Item(itemData);
+            let itemExist = searchResults.find(item => item.it.match(it))
+            if (!itemExist) {
+                searchResults.push({it:it,data: [SearchItemData2ItemData(itemData, key)]});
+            }else {
+                itemExist.data.push(SearchItemData2ItemData(itemData, key));
+            }
+        }
+    });
+    playerShop.listKey().forEach(key => {
+        if (key !== plxuid && !key.endsWith('_msg')) {
+            playerShop.get(key)[kindName].forEach((item,i) => {
+                if (item.name.includes(searchName)) {
+                    let it = ItemData2Item(item);
+                    let playerShopName = playerShop.get(key).name;
+                    let itemExist = searchResults.find(item => item.it.match(it))
+                    if (!itemExist) {
+                        searchResults.push({it:it,data: [{name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShopName, numIndex: [key,i]}]});
+                    }else {
+                        itemExist.data.push({name: item.name, image: item.image, type: "playerExam", xuid: key, data: item.data, i: playerShopName, numIndex: [key,i]});
+                    }
+                }
+            })
+        }
+    })
+    return searchResults;
 }
 /**
  * 物品搜索表单
@@ -1691,38 +1748,8 @@ function showSearchMenu(player, kind = 0) {
             } else if (kind === 1||kind === 2) {
                 kindName = 'Sell';
             }
-            let indexOB = nameItem.get(kindName);
             // logger.info(indexOB);
-            let searchResults = [];
-            
-            Object.keys(indexOB).forEach(key => {
-                if (key.includes(searchName)) {
-                    let itemData = indexOB[key];
-                    let it = ItemData2Item(itemData);
-                    let itemExist = searchResults.find(item => item.it.match(it))
-                    if (!itemExist) {
-                        searchResults.push({it:it,data: [SearchItemData2ItemData(itemData, key)]});
-                    }else {
-                        itemExist.data.push(SearchItemData2ItemData(itemData, key));
-                    }
-                }
-            });
-            playerShop.listKey().forEach(key => {
-                if (key !== pl.xuid && !key.endsWith('_msg')) {
-                    playerShop.get(key)[kindName].forEach(item => {
-                        if (item.name.includes(searchName)) {
-                            let it = ItemData2Item(item);
-                            let playerShopName = playerShop.get(key).name;
-                            let itemExist = searchResults.find(item => item.it.match(it))
-                            if (!itemExist) {
-                                searchResults.push({it:it,data: [{name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShopName}]});
-                            }else {
-                                itemExist.data.push({name: item.name, image: item.image, type: "playerExam", xuid: key, data: item.data, i: playerShopName});
-                            }
-                        }
-                    })
-                }
-            })
+            let searchResults = SearchItemName(kindName, searchName, pl.xuid);
             for (let item of searchResults) {
                 if (data[2] === 0) {
                     item.data.sort((a, b) => (b.data?.count ?? 999999) - (a.data?.count ?? 999999));
@@ -1751,40 +1778,6 @@ function showSearchMenu(player, kind = 0) {
         }
     }});
 }
-
-// /**
-//  * 搜索物品
-//  * @param {Item} item LSE Item 对象。
-//  * @param {Number} kind 搜索类型，0：购买，1：出售
-//  * @param {string} Plxuid 玩家 xuid
-//  * @returns {Array}
-//  */
-// function SreachItem (it, kind, Plxuid) {
-//     let searchResults = [];
-//     let kindName = '';
-//     if (kind === 0) {
-//         kindName = 'Buy';
-//     } else if (kind === 1||kind === 2) {
-//         kindName = 'Sell';
-//     }
-//     let indexOB = nameItem.get(kindName);
-//     indexOB.forEach(key => {
-//         if (ItemData2Item(indexOB[key]).match(it)) {
-//             searchResults.push(SearchItemData2ItemData(indexOB[key], key));
-//         }
-//     })
-//     playerShop.listKey.forEach(key => {
-//         if (key !== Plxuid && !key.endsWith('_msg')) {
-//             playerShop.get(key)[kindName].forEach(item => {
-//                 if (ItemData2Item(item).match(it)) {
-//                     searchResults.push({name: item.name, image: item.image, xuid: key, type: "playerExam", data: item.data, i: playerShop.get(key).name});
-//                 }
-//             })
-//         }
-//     })
-//     return searchResults;
-// }
-// 留着备用的搜索函数
 /**
  * 计算表达式的值
  * @param {string} expr 
@@ -2389,7 +2382,108 @@ function showRank(player) {
             });
         }
     });
-   }
+}
+/**
+ * 购买或销售物品
+ * @param {Player} player 玩家对象
+ * @param {Array} numIndex 物品索引，系统物品为 shopConfig 数组下标路径（如 [0,2]），玩家商店物品为 [xuid, 下标]
+ * @param {number|string} count 购买或销售数量（Sell 支持 "All"）
+ * @param {string} kindName 分类名称Sell or Buy
+ * @returns {Array|string} 成功返回 [实际数量，获得or消耗的金币]，失败返回错误信息字符串
+ */
+function buyANDsellAPI (player, numIndex, count, kindName) {
+    if (!kindName) {
+        return "分类名称不能为空";
+    }else if (!numIndex?.length) {
+        return "物品索引不能为空";
+    }else if (!count) {
+        return "购买或销售数量不能为空";
+    }
+    let isPlayerExam = typeof numIndex[0] === "string";
+    if (kindName !== "Sell" && kindName !== "Buy") {
+        return "分类名称错误";
+    }else if (kindName === "Buy") {
+        let itemData = null;
+        if (isPlayerExam) {
+            let shopData = playerShop.get(numIndex[0]);
+            if (!shopData) {
+                return "玩家商店不存在";
+            }
+            itemData = shopData[kindName][numIndex[1]];
+        }else {
+            itemData = shopConfig[kindName];
+            for (let idx of numIndex) {
+                if (itemData?.type === "group") itemData = itemData.data;
+                itemData = itemData?.[idx];
+            }
+        }
+        if (!itemData) {
+            return "物品不存在";
+        }
+        return buyAndCost(player, itemData, count, isPlayerExam?numIndex[0]:null);
+    }else if (kindName === "Sell") {
+        let itemData = null;
+        if (isPlayerExam) {
+            let shopData = playerShop.get(numIndex[0]);
+            if (!shopData) {
+                return "玩家商店不存在";
+            }
+            itemData = shopData[kindName][numIndex[1]];
+        }else {
+            itemData = shopConfig[kindName];
+            for (let idx of numIndex) {
+                if (itemData?.type === "group") itemData = itemData.data;
+                itemData = itemData?.[idx];
+            }
+        }
+        if (!itemData) {
+            return "物品不存在";
+        };
+        return sellAndGive(player, itemData, count, ItemData2Item(itemData), isPlayerExam?numIndex[0]:null);
+    }
+}
+/**
+ * 获取玩家物品信息
+ * @param {Player} player 玩家对象
+ * @param {string} kindName 分类名称Sell or Buy
+ * @param {Array} numIndex 物品索引，格式同 buyANDsellAPI
+ * @returns {Object|string} Buy 返回 {playerMoney}，Sell 返回 {playerItemCount}，失败返回错误信息字符串
+ */
+function getPlayerItemInfo(player, kindName, numIndex) {
+    if (!kindName) {
+        return "分类名称不能为空";
+    }else if (!numIndex?.length) {
+        return "物品索引不能为空";
+    }
+    let isPlayerExam = typeof numIndex[0] === "string";
+    if (kindName !== "Sell" && kindName !== "Buy") {
+        return "分类名称错误";
+    }else if (kindName === "Buy") {
+        return {playerMoney: money.get(player.xuid)};
+    }else if (kindName === "Sell") {
+        let itemData = null;
+        if (isPlayerExam) {
+            let shopData = playerShop.get(numIndex[0]);
+            if (!shopData) {
+                return "玩家商店不存在";
+            }
+            itemData = shopData[kindName][numIndex[1]];
+        }else {
+            itemData = shopConfig[kindName];
+            for (let idx of numIndex) {
+                if (itemData?.type === "group") itemData = itemData.data;
+                itemData = itemData?.[idx];
+            }
+        }
+        if (!itemData) {
+            return "物品不存在";
+        }
+        return {playerItemCount: getItemInPlayer(player, ItemData2Item(itemData))};
+    }
+}
+ll.exports(getPlayerItemInfo,"getPlayerItemInfo", "getPlayerItemInfo")//获取玩家物品信息
+ll.exports(buyANDsellAPI,"buyANDsellAPI", "buyANDsellAPI")//购买或销售物品
+ll.exports(SearchItemName,"SearchItemName", "SearchItemName")//搜索物品名称
 ll.exports(getShopRank,"shopRank", "getShopRank")//获取排行榜数据
 // 指令注册
 const shopCommand = mc.newCommand("shop", "打开商店",PermType.Any);
