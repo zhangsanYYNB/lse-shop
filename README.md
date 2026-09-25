@@ -408,6 +408,58 @@
 
 ---
 
+## 🔌 开发者 API（v1.1.2新增）
+
+本插件通过 `ll.exports` 导出以下 API，供其他插件/脚本调用（使用 `ll.imports(命名空间, 名称)` 导入）：
+
+### 1. buyANDsellAPI — 购买/出售物品
+
+```js
+const buyANDsellAPI = ll.imports("buyANDsellAPI", "buyANDsellAPI");
+// 购买系统商店物品（numIndex 为 shopConfig 数组下标路径，如 [0,2]）
+const result = buyANDsellAPI(player, [0, 2], 1, "Buy");
+// 出售玩家商店物品（numIndex 为 [店主xuid, 下标]，count 支持 "All"）
+const result2 = buyANDsellAPI(player, ["xuid", 0], "All", "Sell");
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `player` | Player | 玩家对象 |
+| `numIndex` | Array | 物品索引：系统物品为下标路径（如 `[0,2]`），玩家商店物品为 `[xuid, 下标]` |
+| `count` | number \| string | 数量（Sell 支持 `"All"`） |
+| `kindName` | string | `"Buy"` 或 `"Sell"` |
+
+**返回值：** 成功返回 `[实际数量, 获得或消耗的金币]`，失败返回错误信息字符串。
+
+### 2. getPlayerItemInfo — 获取玩家物品信息
+
+```js
+const getPlayerItemInfo = ll.imports("getPlayerItemInfo", "getPlayerItemInfo");
+const info = getPlayerItemInfo(player, "Buy", [0, 2]);   // → {playerMoney: 余额}
+const info2 = getPlayerItemInfo(player, "Sell", [0, 2]); // → {playerItemCount: 背包内数量}
+```
+
+**返回值：** `Buy` 返回 `{playerMoney}`，`Sell` 返回 `{playerItemCount}`，失败返回错误信息字符串。
+
+### 3. SearchItemName — 搜索物品
+
+```js
+const SearchItemName = ll.imports("SearchItemName", "SearchItemName");
+const results = SearchItemName("Buy", "钻石", player.xuid);
+```
+
+同时搜索系统商店与所有其他玩家商店的物品（`plxuid` 用于排除自己的商店）。
+
+**返回值：** 数组，每项为 `{it: Item实例, data: [物品数据...]}`，其中 `data[].numIndex` 可直接传给 `buyANDsellAPI` 使用。
+
+### 4. shopRank — 获取排行榜数据（v1.1.1提供）
+
+```js
+const getShopRank = ll.imports("shopRank", "getShopRank");
+```
+
+---
+
 ## 📁 文件结构
 
 ```
@@ -470,6 +522,14 @@ plugins/shop/
 ---
 
 ## 🔄 更新日志
+
+### v1.1.2
+- **新增开发者 API**：通过 `ll.exports` 向其他插件/脚本导出商店能力，便于跨插件复用（详见下方"🔌 开发者 API"章节）
+  - `buyANDsellAPI`：以代码方式购买/出售系统商店或玩家商店物品
+  - `getPlayerItemInfo`：查询玩家金币余额或背包中指定商品的数量
+  - `SearchItemName`：按名称搜索系统商店与玩家商店物品
+- **代码重构**：提取 `getItemInPlayer()` 与 `SearchItemName()` 消除重复代码；`checkHash()` 增强版本管理；`__index__()` 新增 `numIndex` 路径记录
+- 版本号更新至1.1.2
 
 ### v1.1.1
 - **自动售出支持玩家商店**：可将自己商店的回收物品设置为自动售出
@@ -710,8 +770,8 @@ A: 请先确认服务器的 `server.properties` 中是否设置了 `language=zh_
 
 ---
 
-**最后更新：** 2026-08-14
-**版本：** 1.1.1
+**最后更新：** 2026-09-25
+**版本：** 1.1.2
 **作者：** zhangsanYYNB
 
 ---
@@ -802,5 +862,4 @@ A: 请先确认服务器的 `server.properties` 中是否设置了 `language=zh_
 - 💡 **自动售出支持玩家商店（v1.1.1）**：可将自己商店的回收物品设置为自动售出，自动出售时按商店当前收购价结算
 - 💡 **消息提醒（v1.1.1）**：离线期间商店被购买/回收时，下次上线会自动收到消息提醒；在线时则会直接收到提示
 - ⚠️ 搜索功能支持同时搜索系统商店和所有玩家商店的物品
-- 💡 OP可以代为管理任意玩家的商店（设置上架/回收物品）知）
-- 💡 建议先使用在线编辑器规划好分类结构，再通过GUI添加具体物品
+- 💡 OP可以代为管理任意玩家的商店（设置上架/回收物品）
